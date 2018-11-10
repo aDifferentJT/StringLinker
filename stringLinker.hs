@@ -59,9 +59,9 @@ compileFunction (ident, str) = "global "
                             ++ ident
                             ++ "\n"
                             ++ ident
-                            ++ ":\nmov rax,_"
+                            ++ ":\nlea rax,[rel _"
                             ++ ident
-                            ++ "\nret"
+                            ++ "]\nret"
 
 compileString :: (String, String) -> String
 compileString (ident, str) = "_"
