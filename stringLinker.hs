@@ -55,7 +55,7 @@ compileFunction (ident, str) = "global "
                             ++ ident
                             ++ "\n"
                             ++ ident
-                            ++ ":\nmov eax,_"
+                            ++ ":\nmov rax,_"
                             ++ ident
                             ++ "\nret"
 
