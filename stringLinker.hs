@@ -20,16 +20,19 @@ defaultOptions = Options
   , optOutput = Nothing
   }
 
+inputOpt :: String -> Options -> IO Options
+inputOpt arg opt = return opt
+  { optInput  = ((takeBaseName arg,) <$> readFile arg) : optInput opt
+  , optOutput = Just (fromMaybe (takeBaseName arg) (optOutput opt))
+  }
+
 options :: [OptDescr (Options -> IO Options)]
 options =
   [ Option
       "i"
       ["input"]
       (ReqArg
-        (\arg opt -> return opt
-          { optInput  = ((takeBaseName arg,) <$> readFile arg) : optInput opt
-          , optOutput = Just (fromMaybe (takeBaseName arg) (optOutput opt))
-          })
+        inputOpt
         "FILE")
       "Input file"
   , Option
@@ -90,7 +93,7 @@ main = do
   args <- getArgs
 
   -- Parse options, getting a list of option actions
-  let (actions, nonOptions, errors) = getOpt RequireOrder options args
+  let (actions, nonOptions, errors) = getOpt (ReturnInOrder inputOpt) options args
 
   -- Here we thread defaultOptions through all supplied option actions
   opts <- foldl (>>=) (return defaultOptions) actions
