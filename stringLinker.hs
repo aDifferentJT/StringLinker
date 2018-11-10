@@ -28,7 +28,7 @@ options =
       (ReqArg
         (\arg opt -> return opt
           { optInput  = ((takeBaseName arg,) <$> readFile arg) : optInput opt
-          , optOutput = Just (fromMaybe (dropExtension arg) (optOutput opt))
+          , optOutput = Just (fromMaybe (takeBaseName arg) (optOutput opt))
           })
         "FILE")
       "Input file"
