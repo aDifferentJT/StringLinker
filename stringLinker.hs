@@ -55,16 +55,18 @@ options =
   ]
 
 compileFunction :: (String, String) -> String
-compileFunction (ident, str) = "global "
+compileFunction (ident, str) = "global _"
                             ++ ident
-                            ++ "\n"
+                            ++ "\n_"
                             ++ ident
-                            ++ ":\nlea rax,[rel _"
+                            ++ ":\nlea rax,[rel __"
                             ++ ident
                             ++ "]\nret"
 
 compileString :: (String, String) -> String
-compileString (ident, str) = "_"
+compileString (ident, str) = "global __"
+                          ++ ident
+                          ++ "\n__"
                           ++ ident
                           ++ " DB "
                           ++ (intercalate "," . map (show . fromEnum) $ str)
