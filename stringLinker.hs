@@ -6,6 +6,7 @@ import System.IO
 import System.Exit
 import System.FilePath
 import System.Process
+import Distribution.System
 import Data.Maybe
 import Data.List
 
@@ -89,6 +90,16 @@ generateHeader xs = intercalate "\n" . map ($ xs) $
   , const "#ifdef __cplusplus\n}\n#endif"
   ]
 
+asmOutputFormat :: String
+asmOutputFormat = objF ++ bitSize
+  where objF = case buildOS of
+                 Linux   -> "elf"
+                 OSX     -> "macho"
+                 Windows -> "win"
+        bitSize = case buildArch of
+                    I386   -> "32"
+                    X86_64 -> "64"
+
 main = do
   args <- getArgs
 
@@ -107,5 +118,5 @@ main = do
   writeFile (output ++ ".asm") . compile $ input
   writeFile (output ++ ".h") . generateHeader $ input
 
-  callProcess "nasm" ["-f elf64", output ++ ".asm"]
+  callProcess "nasm" ["-f", asmOutputFormat, output ++ ".asm"]
 
