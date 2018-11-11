@@ -10,15 +10,27 @@ import Distribution.System
 import Data.Maybe
 import Data.List
 
+nativeOutputFormat :: String
+nativeOutputFormat = objF ++ bitSize
+  where objF = case buildOS of
+                 Linux   -> "elf"
+                 OSX     -> "macho"
+                 Windows -> "win"
+        bitSize = case buildArch of
+                    I386   -> "32"
+                    X86_64 -> "64"
+
 data Options = Options
-  { optInput  :: [IO (String, String)]
-  , optOutput :: Maybe FilePath
+  { optInput   :: [IO (String, String)]
+  , optOutput  :: Maybe FilePath
+  , optOutputF :: String
   }
 
 defaultOptions :: Options
 defaultOptions = Options
-  { optInput  = []
-  , optOutput = Nothing
+  { optInput   = []
+  , optOutput  = Nothing
+  , optOutputF = nativeOutputFormat
   }
 
 inputOpt :: String -> Options -> IO Options
@@ -44,6 +56,13 @@ options =
         "FILE")
       "Output file"
   , Option
+      "f"
+      ["format"]
+      (ReqArg
+        (\arg opt -> return opt { optOutputF = arg })
+        "FORMAT")
+      "Set output format"
+  , Option
       "h"
       ["help"]
       (NoArg
@@ -54,14 +73,16 @@ options =
       "Show help"
   ]
 
-compileFunction :: (String, String) -> String
-compileFunction (ident, str) = "global _"
-                            ++ ident
-                            ++ "\n_"
-                            ++ ident
-                            ++ ":\nlea rax,[rel __"
-                            ++ ident
-                            ++ "]\nret"
+compileFunction :: String -> (String, String) -> String
+compileFunction format (ident, str) = "global _"
+                                   ++ ident
+                                   ++ "\n_"
+                                   ++ ident
+                                   ++ ":\nlea "
+                                   ++ (if (reverse . take 2 . reverse $ format) == "64" then "rax" else "eax")
+                                   ++ ",[rel __"
+                                   ++ ident
+                                   ++ "]\nret"
 
 compileString :: (String, String) -> String
 compileString (ident, str) = "global __"
@@ -72,10 +93,10 @@ compileString (ident, str) = "global __"
                           ++ (intercalate "," . map (show . fromEnum) $ str)
                           ++ ",0"
 
-compile :: [(String, String)] -> String
-compile xs = intercalate "\n" . map ($ xs) $
+compile :: String -> [(String, String)] -> String
+compile format xs = intercalate "\n" . map ($ xs) $
   [ const "section .text"
-  , intercalate "\n" . map (compileFunction $)
+  , intercalate "\n" . map (compileFunction format $)
   , const "section .data"
   , intercalate "\n" . map (compileString $)
   ]
@@ -92,16 +113,6 @@ generateHeader xs = intercalate "\n" . map ($ xs) $
   , const "#ifdef __cplusplus\n}\n#endif"
   ]
 
-asmOutputFormat :: String
-asmOutputFormat = objF ++ bitSize
-  where objF = case buildOS of
-                 Linux   -> "elf"
-                 OSX     -> "macho"
-                 Windows -> "win"
-        bitSize = case buildArch of
-                    I386   -> "32"
-                    X86_64 -> "64"
-
 main = do
   args <- getArgs
 
@@ -117,8 +128,7 @@ main = do
 
   let output = fromJust . optOutput $ opts
 
-  writeFile (output ++ ".asm") . compile $ input
+  writeFile (output ++ ".asm") . compile (optOutputF opts) $ input
   writeFile (output ++ ".h") . generateHeader $ input
 
-  callProcess "nasm" ["-f", asmOutputFormat, output ++ ".asm"]
-
+  callProcess "nasm" ["-f", optOutputF opts, output ++ ".asm"]
