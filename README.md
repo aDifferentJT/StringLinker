@@ -2,7 +2,7 @@
 
 StringLinker is a tool for linking large amounts of data with compiled programs.
 By default it generates a C/C++ header to make it easy to use with C or C++.
-It supports linux (though only tested on Debian), macOS and Windows.
+It supports linux (tested with C and C++ using Clang on Debian, GCC on Debian and GCC on fedora), macOS (C and C++ using Clang and GCC) and Windows.
 
 ## How to use
 1. Install [GHC](https://www.haskell.org)
