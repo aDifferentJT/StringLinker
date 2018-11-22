@@ -10,6 +10,7 @@ import Distribution.System
 import Data.Maybe
 import Data.List
 import Data.Char
+import Data.Bool
 
 mapFst :: (a -> b) -> (a, c) -> (b, c)
 mapFst f (x, y) = (f x, y)
@@ -113,6 +114,12 @@ options =
       "Show help"
   ]
 
+getActions :: ([Options -> IO Options], [String], [String]) -> IO [Options -> IO Options]
+getActions (actions, nonOptions, errors) = (sequence $ map errorWithoutStackTrace errors) >> return actions
+
+assertInput :: Options -> Options
+assertInput opts = bool opts (errorWithoutStackTrace "No input files given") . null . optInput $ opts
+
 compileFunction :: Arch -> (String, String) -> String
 compileFunction arch (ident, str) = "global "
                                    ++ ident
@@ -153,23 +160,19 @@ generateHeader xs = intercalate "\n" . map ($ xs) $
   , const "#ifdef __cplusplus\n}\n#endif"
   ]
 
-main = do
-  args <- getArgs
+chain :: IO a -> [a -> IO ()] -> IO ()
+chain x = foldl (>>) (return ()) . map (x >>=)
 
-  -- Parse options, getting a list of option actions
-  let (actions, nonOptions, errors) = getOpt (ReturnInOrder inputOpt) options args
-
-  -- Here we thread defaultOptions through all supplied option actions
-  opts <- foldl (>>=) (return defaultOptions) actions
-
-  input <- sequence . optInput $ opts
-
-  if null input then errorWithoutStackTrace "No input files given" else return ()
-
-  let output = fromJust . optOutput $ opts
-
-  writeFile (output ++ ".asm") . compile (optOutputArch opts) $ input
-  writeFile (output ++ ".h") . generateHeader $ input
-
-  callProcess "nasm" ["-f", optOutputF opts, output ++ ".asm"]
+main = getArgs                                          -- Get the arguments
+   >>= return . getOpt (ReturnInOrder inputOpt) options -- Parse options to get a list of actions and errors
+   >>= getActions                                       -- Throw the errors to get the actions
+   >>= foldl (>>=) (return defaultOptions)              -- Here we thread defaultOptions through all supplied option actions
+   >>= return . assertInput                             -- Verify that input is non-empty
+   >>= (\(Options input (Just output) outputF outputArch) ->
+          chain (sequence input)
+            [ writeFile (output ++ ".asm") . compile outputArch
+            , writeFile (output ++ ".h") . generateHeader
+            ]
+       >> callProcess "nasm" ["-f", outputF, output ++ ".asm"]
+       )
 
