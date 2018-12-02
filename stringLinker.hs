@@ -89,10 +89,11 @@ initialOptions = MaybeOptions
 
 fillDefaultOptions :: MaybeOptions -> Options
 fillDefaultOptions opts = Options
-  { optInput          = mOptInput opts
-  , optOutput         = fromMaybe (intercalate "_" . map fst . mOptInput $ opts) (mOptOutput opts)
+  { optInput          = input
+  , optOutput         = fromMaybe (intercalate "_" . map fst $ input) (mOptOutput opts)
   , optOutputF        = fromMaybe (nativeFormat buildPlatform) (mOptOutputF opts)
   }
+  where input = reverse . mOptInput $ opts
 
 inputOpt :: String -> MaybeOptions -> IO MaybeOptions
 inputOpt arg opt = return opt { mOptInput = (takeBaseName arg, readFile arg) : mOptInput opt }
