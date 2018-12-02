@@ -1,4 +1,5 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE RankNTypes #-}
 
 import System.Console.GetOpt
 import System.Environment
@@ -11,6 +12,8 @@ import Data.Maybe
 import Data.List
 import Data.Char
 import Data.Bool
+import Text.Read
+import qualified Text.ParserCombinators.ReadP (string)
 
 mapFst :: (a -> b) -> (a, c) -> (b, c)
 mapFst f (x, y) = (f x, y)
@@ -21,48 +24,60 @@ mapSnd f (x, y) = (x, f y)
 sequencePair :: (IO a, IO b) -> IO (a, b)
 sequencePair (xm, ym) = xm >>= ((<$> ym) . (,))
 
-outputFormat :: Platform -> String
-outputFormat (Platform arch os) = objF ++ bitSize
+string = lift . Text.ParserCombinators.ReadP.string
+
+data Bits = B32
+          | B64
+  deriving Eq
+
+instance Show Bits where
+  show B32 = "32"
+  show B64 = "64"
+
+instance Read Bits where
+  readPrec = (string "32" >> return B32)
+         +++ (string "64" >> return B64)
+
+data Format = Elf   Bits
+            | Macho Bits
+            | Win   Bits
+  deriving Eq
+
+instance Show Format where
+  show (Elf   b) = "elf"   ++ show b
+  show (Macho b) = "macho" ++ show b
+  show (Win   b) = "win"   ++ show b
+
+instance Read Format where
+  readPrec = (string "elf"   >> (Elf   <$> readPrec))
+         +++ (string "macho" >> (Macho <$> readPrec))
+         +++ (string "win"   >> (Win   <$> readPrec))
+
+nativeFormat :: Platform -> Format
+nativeFormat (Platform arch os) = objF bitSize
   where objF = case os of
-                 Linux   -> "elf"
-                 OSX     -> "macho"
-                 Windows -> "win"
+                 Linux   -> Elf
+                 OSX     -> Macho
+                 Windows -> Win
         bitSize = case arch of
-                    I386   -> "32"
-                    X86_64 -> "64"
+                    I386   -> B32
+                    X86_64 -> B64
 
-readPlatform :: String -> Platform
-readPlatform str = Platform (
-    case arch of
-      "32" -> I386
-      "64" -> X86_64
-  )(
-    case os of
-      "linux" -> Linux
-      "osx"   -> OSX
-      "macos" -> OSX
-      "mac"   -> OSX
-      "win"   -> Windows
-  )
-  where (os, arch) = splitAt (length str - 2) . map toLower $ str
-
-transformIdent :: Platform -> String -> String
-transformIdent (Platform _ Linux)   = id
-transformIdent (Platform _ OSX)     = ("_" ++)
-transformIdent (Platform _ Windows) = ("_" ++)
+transformIdent :: Format -> String -> String
+transformIdent (Elf _)   = id
+transformIdent (Macho _) = ("_" ++)
+transformIdent (Win _)   = ("_" ++)
 
 data MaybeOptions = MaybeOptions
   { mOptInput          :: [(String, IO String)]
   , mOptOutput         :: Maybe FilePath
-  , mOptOutputF        :: Maybe String
-  , mOptOutputPlatform :: Platform
+  , mOptOutputF        :: Maybe Format
   }
 
 data Options = Options
   { optInput          :: [(String, IO String)]
   , optOutput         :: FilePath
-  , optOutputF        :: String
-  , optOutputPlatform :: Platform
+  , optOutputF        :: Format
   }
 
 initialOptions :: MaybeOptions
@@ -70,15 +85,13 @@ initialOptions = MaybeOptions
   { mOptInput          = []
   , mOptOutput         = Nothing
   , mOptOutputF        = Nothing
-  , mOptOutputPlatform = buildPlatform
   }
 
 fillDefaultOptions :: MaybeOptions -> Options
 fillDefaultOptions opts = Options
   { optInput          = mOptInput opts
-  , optOutput         = fromMaybe (fst . head . mOptInput $ opts) (mOptOutput opts)
-  , optOutputF        = fromMaybe (outputFormat . mOptOutputPlatform $ opts) (mOptOutput opts)
-  , optOutputPlatform = mOptOutputPlatform opts
+  , optOutput         = fromMaybe (intercalate "_" . map fst . mOptInput $ opts) (mOptOutput opts)
+  , optOutputF        = fromMaybe (nativeFormat buildPlatform) (mOptOutputF opts)
   }
 
 inputOpt :: String -> MaybeOptions -> IO MaybeOptions
@@ -104,16 +117,9 @@ options =
       "f"
       ["format"]
       (ReqArg
-        (\arg opt -> return opt { mOptOutputF = Just arg })
+        (\arg opt -> return opt { mOptOutputF = Just . read $ arg })
         "FORMAT")
       "Set output format"
-  , Option
-      "p"
-      ["platform"]
-      (ReqArg
-        (\arg opt -> return opt { mOptOutputPlatform = readPlatform arg })
-        "PLATFORM")
-      "Set output platform"
   , Option
       "h"
       ["help"]
@@ -140,8 +146,8 @@ compileString (ident, str) = "global "
                           ++ (intercalate "," . map (show . fromEnum) $ str)
                           ++ ",0"
 
-compile :: Platform -> [(String, String)] -> String
-compile platform xs = intercalate "\n" . map ($ map (mapFst (transformIdent platform)) xs) $
+compile :: Format -> [(String, String)] -> String
+compile format xs = intercalate "\n" . map ($ map (mapFst (transformIdent format)) xs) $
   [ const "section .data"
   , intercalate "\n" . map (compileString $)
   ]
@@ -151,10 +157,10 @@ generateCDecl (ident, str) = "extern const char "
                           ++ ident
                           ++ "[];"
 
-generateHeader :: Platform -> [(String, String)] -> String
+generateHeader :: Format -> [(String, String)] -> String
 generateHeader _ xs = intercalate "\n" . map (generateCDecl $) $ xs
 
-outputFiles :: [(String, Platform -> [(String, String)] -> String)]
+outputFiles :: [(String, Format -> [(String, String)] -> String)]
 outputFiles =
   [ ("asm", compile)
   , ("h", generateHeader)
@@ -163,13 +169,13 @@ outputFiles =
 chain :: IO a -> [a -> IO ()] -> IO ()
 chain x = foldl (>>) (return ()) . map (x >>=)
 
-generateFiles :: [(String, Platform -> [(String, String)] -> String)] -> Options -> IO ()
+generateFiles :: [(String, Format -> [(String, String)] -> String)] -> Options -> IO ()
 generateFiles files opts =
     chain (sequence . map (sequencePair . mapFst return) . optInput $ opts)
   . map
     (\(ext, gen) ->
         writeFile (optOutput opts ++ "." ++ ext)
-      . gen (optOutputPlatform opts)
+      . gen (optOutputF opts)
     )
   $ files
 
@@ -184,6 +190,6 @@ main = getArgs                                          -- Get the arguments
    >>= return . fillDefaultOptions
    >>= passthrough (generateFiles outputFiles)
    >>= (\opts ->
-         callProcess "nasm" ["-f", optOutputF opts, optOutput opts ++ ".asm"]
+         callProcess "nasm" ["-f", show . optOutputF $ opts, optOutput opts ++ ".asm"]
        )
 

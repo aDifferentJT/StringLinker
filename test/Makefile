@@ -20,5 +20,5 @@ string.o string.h: ../stringLinker string.txt
 
 .PHONY: clean
 clean:
-	rm string.asm string.h string.o main.o *.out
+	rm *.asm *.h *.o *.out
 
