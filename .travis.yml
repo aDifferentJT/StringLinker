@@ -8,15 +8,15 @@ dist: xenial
 addons:
   apt:
     packages:
-      ghc
-      nasm
-      gcc
-      g++
+    - ghc
+    - nasm
+    - gcc
+    - g++
   homebrew:
     packages:
-      ghc
-      nasm
-      gcc
+    - ghc
+    - nasm
+    - gcc
 
 ghc:
   8
