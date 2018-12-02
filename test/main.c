@@ -3,6 +3,6 @@
 #include "string.h"
 
 int main() {
-  printf("%s", string());
+  printf("%s", string);
 }
 

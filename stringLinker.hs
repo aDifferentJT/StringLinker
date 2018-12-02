@@ -18,48 +18,73 @@ mapFst f (x, y) = (f x, y)
 mapSnd :: (a -> b) -> (c, a) -> (c, b)
 mapSnd f (x, y) = (x, f y)
 
-nativeOutputFormat :: String
-nativeOutputFormat = objF ++ bitSize
-  where objF = case buildOS of
+sequencePair :: (IO a, IO b) -> IO (a, b)
+sequencePair (xm, ym) = xm >>= ((<$> ym) . (,))
+
+outputFormat :: Platform -> String
+outputFormat (Platform arch os) = objF ++ bitSize
+  where objF = case os of
                  Linux   -> "elf"
                  OSX     -> "macho"
                  Windows -> "win"
-        bitSize = case buildArch of
+        bitSize = case arch of
                     I386   -> "32"
                     X86_64 -> "64"
 
-register :: Arch -> String
-register I386   = "eax"
-register X86_64 = "rax"
+readPlatform :: String -> Platform
+readPlatform str = Platform (
+    case arch of
+      "32" -> I386
+      "64" -> X86_64
+  )(
+    case os of
+      "linux" -> Linux
+      "osx"   -> OSX
+      "macos" -> OSX
+      "mac"   -> OSX
+      "win"   -> Windows
+  )
+  where (os, arch) = splitAt (length str - 2) . map toLower $ str
 
-transformIdent :: String -> String
-transformIdent = case buildOS of
-                   Linux   -> id
-                   OSX     -> ("_" ++)
-                   Windows -> ("_" ++)
+transformIdent :: Platform -> String -> String
+transformIdent (Platform _ Linux)   = id
+transformIdent (Platform _ OSX)     = ("_" ++)
+transformIdent (Platform _ Windows) = ("_" ++)
+
+data MaybeOptions = MaybeOptions
+  { mOptInput          :: [(String, IO String)]
+  , mOptOutput         :: Maybe FilePath
+  , mOptOutputF        :: Maybe String
+  , mOptOutputPlatform :: Platform
+  }
 
 data Options = Options
-  { optInput      :: [IO (String, String)]
-  , optOutput     :: Maybe FilePath
-  , optOutputF    :: String
-  , optOutputArch :: Arch
+  { optInput          :: [(String, IO String)]
+  , optOutput         :: FilePath
+  , optOutputF        :: String
+  , optOutputPlatform :: Platform
   }
 
-defaultOptions :: Options
-defaultOptions = Options
-  { optInput      = []
-  , optOutput     = Nothing
-  , optOutputF    = nativeOutputFormat
-  , optOutputArch = buildArch
+initialOptions :: MaybeOptions
+initialOptions = MaybeOptions
+  { mOptInput          = []
+  , mOptOutput         = Nothing
+  , mOptOutputF        = Nothing
+  , mOptOutputPlatform = buildPlatform
   }
 
-inputOpt :: String -> Options -> IO Options
-inputOpt arg opt = return opt
-  { optInput  = ((takeBaseName arg,) <$> readFile arg) : optInput opt
-  , optOutput = Just (fromMaybe (takeBaseName arg) (optOutput opt))
+fillDefaultOptions :: MaybeOptions -> Options
+fillDefaultOptions opts = Options
+  { optInput          = mOptInput opts
+  , optOutput         = fromMaybe (fst . head . mOptInput $ opts) (mOptOutput opts)
+  , optOutputF        = fromMaybe (outputFormat . mOptOutputPlatform $ opts) (mOptOutput opts)
+  , optOutputPlatform = mOptOutputPlatform opts
   }
 
-options :: [OptDescr (Options -> IO Options)]
+inputOpt :: String -> MaybeOptions -> IO MaybeOptions
+inputOpt arg opt = return opt { mOptInput = (takeBaseName arg, readFile arg) : mOptInput opt }
+
+options :: [OptDescr (MaybeOptions -> IO MaybeOptions)]
 options =
   [ Option
       "i"
@@ -72,37 +97,23 @@ options =
       "o"
       ["output"]
       (ReqArg
-        (\arg opt -> return opt { optOutput = Just arg })
+        (\arg opt -> return opt { mOptOutput = Just arg })
         "FILE")
       "Output file"
   , Option
       "f"
       ["format"]
       (ReqArg
-        (\arg opt -> return opt {
-            optOutputF = arg,
-            optOutputArch = case reverse . take 2 . reverse $ arg of
-                              "32" -> I386
-                              "64" -> X86_64
-                              _    -> optOutputArch opt
-          })
+        (\arg opt -> return opt { mOptOutputF = Just arg })
         "FORMAT")
       "Set output format"
   , Option
-      "a"
-      ["arch", "architecture"]
+      "p"
+      ["platform"]
       (ReqArg
-        (\arg opt -> return opt {
-            optOutputArch = case map toLower arg of
-                              "32"     -> I386
-                              "i386"   -> I386
-                              "x86"    -> I386
-                              "64"     -> X86_64
-                              "x64"    -> X86_64
-                              "x86_64" -> X86_64
-          })
-        "ARCH")
-      "Set output architecture"
+        (\arg opt -> return opt { mOptOutputPlatform = readPlatform arg })
+        "PLATFORM")
+      "Set output platform"
   , Option
       "h"
       ["help"]
@@ -114,65 +125,65 @@ options =
       "Show help"
   ]
 
-getActions :: ([Options -> IO Options], [String], [String]) -> IO [Options -> IO Options]
+getActions :: ([MaybeOptions -> IO MaybeOptions], [String], [String]) -> IO [MaybeOptions -> IO MaybeOptions]
 getActions (actions, nonOptions, errors) = (sequence $ map errorWithoutStackTrace errors) >> return actions
 
-assertInput :: Options -> Options
-assertInput opts = bool opts (errorWithoutStackTrace "No input files given") . null . optInput $ opts
-
-compileFunction :: Arch -> (String, String) -> String
-compileFunction arch (ident, str) = "global "
-                                   ++ ident
-                                   ++ "\n"
-                                   ++ ident
-                                   ++ ":\nlea "
-                                   ++ register arch
-                                   ++ ",[rel _"
-                                   ++ ident
-                                   ++ "]\nret"
+assertInput :: MaybeOptions -> MaybeOptions
+assertInput opts = bool opts (errorWithoutStackTrace "No input files given") . null . mOptInput $ opts
 
 compileString :: (String, String) -> String
-compileString (ident, str) = "global _"
+compileString (ident, str) = "global "
                           ++ ident
-                          ++ "\n_"
+                          ++ "\n"
                           ++ ident
                           ++ " DB "
                           ++ (intercalate "," . map (show . fromEnum) $ str)
                           ++ ",0"
 
-compile :: Arch -> [(String, String)] -> String
-compile arch xs = intercalate "\n" . map ($ map (mapFst transformIdent) xs) $
-  [ const "section .text"
-  , intercalate "\n" . map (compileFunction arch $)
-  , const "section .data"
+compile :: Platform -> [(String, String)] -> String
+compile platform xs = intercalate "\n" . map ($ map (mapFst (transformIdent platform)) xs) $
+  [ const "section .data"
   , intercalate "\n" . map (compileString $)
   ]
 
 generateCDecl :: (String, String) -> String
-generateCDecl (ident, str) = "const char* "
+generateCDecl (ident, str) = "extern const char "
                           ++ ident
-                          ++ "();"
+                          ++ "[];"
 
-generateHeader :: [(String, String)] -> String
-generateHeader xs = intercalate "\n" . map ($ xs) $
-  [ const "#ifdef __cplusplus\nextern \"C\" {\n#endif"
-  , intercalate "\n" . map (generateCDecl $)
-  , const "#ifdef __cplusplus\n}\n#endif"
+generateHeader :: Platform -> [(String, String)] -> String
+generateHeader _ xs = intercalate "\n" . map (generateCDecl $) $ xs
+
+outputFiles :: [(String, Platform -> [(String, String)] -> String)]
+outputFiles =
+  [ ("asm", compile)
+  , ("h", generateHeader)
   ]
 
 chain :: IO a -> [a -> IO ()] -> IO ()
 chain x = foldl (>>) (return ()) . map (x >>=)
 
+generateFiles :: [(String, Platform -> [(String, String)] -> String)] -> Options -> IO ()
+generateFiles files opts =
+    chain (sequence . map (sequencePair . mapFst return) . optInput $ opts)
+  . map
+    (\(ext, gen) ->
+        writeFile (optOutput opts ++ "." ++ ext)
+      . gen (optOutputPlatform opts)
+    )
+  $ files
+
+passthrough :: (a -> IO ()) -> a -> IO a
+passthrough f x = f x >> return x
+
 main = getArgs                                          -- Get the arguments
    >>= return . getOpt (ReturnInOrder inputOpt) options -- Parse options to get a list of actions and errors
    >>= getActions                                       -- Throw the errors to get the actions
-   >>= foldl (>>=) (return defaultOptions)              -- Here we thread defaultOptions through all supplied option actions
+   >>= foldl (>>=) (return initialOptions)              -- Here we thread defaultOptions through all supplied option actions
    >>= return . assertInput                             -- Verify that input is non-empty
-   >>= (\(Options input (Just output) outputF outputArch) ->
-          chain (sequence input)
-            [ writeFile (output ++ ".asm") . compile outputArch
-            , writeFile (output ++ ".h") . generateHeader
-            ]
-       >> callProcess "nasm" ["-f", outputF, output ++ ".asm"]
+   >>= return . fillDefaultOptions
+   >>= passthrough (generateFiles outputFiles)
+   >>= (\opts ->
+         callProcess "nasm" ["-f", optOutputF opts, optOutput opts ++ ".asm"]
        )
 

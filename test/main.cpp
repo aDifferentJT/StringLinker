@@ -3,6 +3,6 @@
 #include "string.h"
 
 int main() {
-  std::cout << string();
+  std::cout << string;
 }
 
