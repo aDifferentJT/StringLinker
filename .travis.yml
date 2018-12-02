@@ -4,8 +4,11 @@ addons:
       ghc
       nasm
       gcc
-      clang
       g++
-      clang++
+  brew:
+    packages:
+      ghc
+      nasm
+      gcc
 
 script: make test
