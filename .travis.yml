@@ -1,1 +1,11 @@
+addons:
+  apt:
+    packages:
+      ghc
+      nasm
+      gcc
+      clang
+      g++
+      clang++
+
 script: make test
