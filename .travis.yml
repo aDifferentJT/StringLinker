@@ -1,25 +1,25 @@
-language: haskell
-
-ghc:
-  8.4
-
-os:
-  - linux
-  - osx
-  - windows
-
-dist: xenial
+matrix:
+  include:
+    - os: linux
+      dist: xenial
+      language: haskell
+      ghc:
+        8.4
+    - os: osx
+  allow_failures:
+    - os: windows
 
 addons:
   apt:
     packages:
-    - nasm
-    - gcc
-    - g++
+      - nasm
+      - gcc
+      - g++
   homebrew:
     packages:
-    - nasm
-    - gcc
+      - ghc
+      - nasm
+      - gcc
 
 install: true
 script: make test
