@@ -6,6 +6,9 @@ matrix:
       ghc:
         8.4
     - os: osx
+      language: generic
+    - os: windows
+      language: generic
   allow_failures:
     - os: windows
 
