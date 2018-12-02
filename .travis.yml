@@ -21,4 +21,5 @@ addons:
     - nasm
     - gcc
 
+install: true
 script: make test
