@@ -1,6 +1,11 @@
+os:
+  - linux
+  - osx
+
 addons:
   apt:
     packages:
+      ghc
       nasm
       gcc
       g++
@@ -9,8 +14,5 @@ addons:
       ghc
       nasm
       gcc
-
-ghc:
-  8.2.2
 
 script: make test

@@ -10,7 +10,6 @@ import System.Process
 import Distribution.System
 import Data.Maybe
 import Data.List
-import Data.Char
 import Data.Bool
 import Text.Read
 import qualified Text.ParserCombinators.ReadP (string)
@@ -18,12 +17,10 @@ import qualified Text.ParserCombinators.ReadP (string)
 mapFst :: (a -> b) -> (a, c) -> (b, c)
 mapFst f (x, y) = (f x, y)
 
-mapSnd :: (a -> b) -> (c, a) -> (c, b)
-mapSnd f (x, y) = (x, f y)
-
 sequencePair :: (IO a, IO b) -> IO (a, b)
 sequencePair (xm, ym) = xm >>= ((<$> ym) . (,))
 
+string :: String -> ReadPrec String
 string = lift . Text.ParserCombinators.ReadP.string
 
 data Bits = B32
@@ -59,9 +56,11 @@ nativeFormat (Platform arch os) = objF bitSize
                  Linux   -> Elf
                  OSX     -> Macho
                  Windows -> Win
+                 _       -> errorWithoutStackTrace "Unsupported OS"
         bitSize = case arch of
                     I386   -> B32
                     X86_64 -> B64
+                    _      -> errorWithoutStackTrace "Unsupported Architecture"
 
 transformIdent :: Format -> String -> String
 transformIdent (Elf _)   = id
@@ -133,7 +132,8 @@ options =
   ]
 
 getActions :: ([MaybeOptions -> IO MaybeOptions], [String], [String]) -> IO [MaybeOptions -> IO MaybeOptions]
-getActions (actions, nonOptions, errors) = (sequence $ map errorWithoutStackTrace errors) >> return actions
+getActions (actions, nonOptions, errors) = (sequence $ map errorWithoutStackTrace errors)
+                                        >> bool (errorWithoutStackTrace ("Unconsumed options: " ++ intercalate ", " nonOptions)) (return actions) (null nonOptions)
 
 assertInput :: MaybeOptions -> MaybeOptions
 assertInput opts = bool opts (errorWithoutStackTrace "No input files given") . null . mOptInput $ opts
@@ -153,10 +153,11 @@ compile format xs = intercalate "\n" . map ($ map (mapFst (transformIdent format
   , intercalate "\n" . map (compileString $)
   ]
 
+wrap :: ([a], [a]) -> [a] -> [a]
+wrap (xs, zs) ys = xs ++ ys ++ zs
+
 generateCDecl :: (String, String) -> String
-generateCDecl (ident, str) = "extern const char "
-                          ++ ident
-                          ++ "[];"
+generateCDecl = wrap ("extern const char ","[];") . fst
 
 generateHeader :: Format -> [(String, String)] -> String
 generateHeader _ xs = intercalate "\n" . map (generateCDecl $) $ xs
@@ -183,6 +184,7 @@ generateFiles files opts =
 passthrough :: (a -> IO ()) -> a -> IO a
 passthrough f x = f x >> return x
 
+main :: IO ()
 main = getArgs                                          -- Get the arguments
    >>= return . getOpt (ReturnInOrder inputOpt) options -- Parse options to get a list of actions and errors
    >>= getActions                                       -- Throw the errors to get the actions

@@ -1,5 +1,5 @@
 stringLinker: stringLinker.hs
-	ghc --make stringLinker.hs
+	ghc --make -Wall stringLinker.hs
 
 .PHONY: clean
 clean:
