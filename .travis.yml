@@ -8,7 +8,7 @@ matrix:
     - os: osx
       language: generic
     - os: windows
-      language: generic
+      language: bash
   allow_failures:
     - os: windows
 
