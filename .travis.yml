@@ -23,6 +23,12 @@ addons:
       - ghc
       - nasm
       - gcc
+  chocolatey:
+    packages:
+      - ghc
+      - nasm
+      - mingw
+      - llvm
 
 install: true
 script: make test
