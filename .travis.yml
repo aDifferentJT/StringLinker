@@ -1,3 +1,5 @@
+language: haskell
+
 os:
   - linux
   - osx
@@ -8,7 +10,6 @@ dist: xenial
 addons:
   apt:
     packages:
-    - ghc
     - nasm
     - gcc
     - g++
@@ -19,6 +20,6 @@ addons:
     - gcc
 
 ghc:
-  8
+  8.4
 
 script: make test
