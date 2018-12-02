@@ -12,7 +12,7 @@ addons:
       nasm
       gcc
       g++
-  brew:
+  homebrew:
     packages:
       ghc
       nasm
