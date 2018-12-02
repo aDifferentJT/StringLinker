@@ -1,5 +1,8 @@
 language: haskell
 
+ghc:
+  8.4
+
 os:
   - linux
   - osx
@@ -15,11 +18,7 @@ addons:
     - g++
   homebrew:
     packages:
-    - ghc
     - nasm
     - gcc
-
-ghc:
-  8.4
 
 script: make test
