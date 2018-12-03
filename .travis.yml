@@ -9,6 +9,8 @@ matrix:
       language: generic
     - os: windows
       language: bash
+      before_install:
+        - choco install -y ghc nasm mingw llvm
   allow_failures:
     - os: windows
 
@@ -23,12 +25,6 @@ addons:
       - ghc
       - nasm
       - gcc
-  chocolatey:
-    packages:
-      - ghc
-      - nasm
-      - mingw
-      - llvm
 
 install: true
 script: make test
