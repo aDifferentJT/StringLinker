@@ -10,7 +10,7 @@ matrix:
     - os: windows
       language: bash
       before_install:
-        - choco install -y ghc nasm mingw llvm
+        - choco install -y ghc nasm mingw llvm make
   allow_failures:
     - os: windows
 
