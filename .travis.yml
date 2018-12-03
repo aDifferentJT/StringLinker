@@ -11,7 +11,7 @@ matrix:
       language: bash
       before_install:
         - choco install -y ghc nasm mingw llvm make
-      script: powershell -c "ghc --version"
+      script: ghc.exe --version
   allow_failures:
     - os: windows
 
