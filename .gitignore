@@ -8,3 +8,6 @@ stringLinker
 
 # This may cause issues in the future but for now will exclude the generated headers
 *.h
+
+debug.sh
+

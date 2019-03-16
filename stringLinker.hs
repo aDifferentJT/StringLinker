@@ -1,24 +1,18 @@
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, RecordWildCards #-}
 
-import System.Console.GetOpt
-import System.Environment
-import System.IO
-import System.Exit
-import System.FilePath
-import System.Process
+import Control.Arrow (first)
 import Distribution.System
-import Data.Maybe
-import Data.List
-import Data.Bool
-import Text.Read
+import Data.Bool (bool)
+import Data.Maybe (fromMaybe)
+import Data.List (intercalate)
+import System.Console.GetOpt (OptDescr (Option), getOpt, ArgDescr(ReqArg, NoArg), ArgOrder (ReturnInOrder), usageInfo)
+import System.Environment (getArgs, getProgName)
+import System.Exit (exitSuccess)
+import System.FilePath (takeBaseName)
+import System.IO (hPutStrLn, stderr)
+import System.Process (callProcess)
+import Text.Read (ReadPrec, readPrec, (+++), lift)
 import qualified Text.ParserCombinators.ReadP (string)
-
-mapFst :: (a -> b) -> (a, c) -> (b, c)
-mapFst f (x, y) = (f x, y)
-
-sequencePair :: (IO a, IO b) -> IO (a, b)
-sequencePair (xm, ym) = xm >>= ((<$> ym) . (,))
 
 string :: String -> ReadPrec String
 string = lift . Text.ParserCombinators.ReadP.string
@@ -68,34 +62,34 @@ transformIdent (Macho _) = ("_" ++)
 transformIdent (Win _)   = ("_" ++)
 
 data MaybeOptions = MaybeOptions
-  { mOptInput          :: [(String, IO String)]
+  { mOptInputs         :: [(String, String)]
   , mOptOutput         :: Maybe FilePath
   , mOptOutputF        :: Maybe Format
   }
 
 data Options = Options
-  { optInput          :: [(String, IO String)]
+  { optInputs         :: [(String, String)]
   , optOutput         :: FilePath
   , optOutputF        :: Format
   }
 
 initialOptions :: MaybeOptions
 initialOptions = MaybeOptions
-  { mOptInput          = []
+  { mOptInputs         = []
   , mOptOutput         = Nothing
   , mOptOutputF        = Nothing
   }
 
 fillDefaultOptions :: MaybeOptions -> Options
-fillDefaultOptions opts = Options
-  { optInput          = input
-  , optOutput         = fromMaybe (intercalate "_" . map fst $ input) (mOptOutput opts)
-  , optOutputF        = fromMaybe (nativeFormat buildPlatform) (mOptOutputF opts)
+fillDefaultOptions MaybeOptions{..} = Options
+  { optInputs         = inputs
+  , optOutput         = fromMaybe (intercalate "_" . map fst $ inputs) mOptOutput
+  , optOutputF        = fromMaybe (nativeFormat buildPlatform) mOptOutputF
   }
-  where input = reverse . mOptInput $ opts
+  where inputs = reverse mOptInputs
 
 inputOpt :: String -> MaybeOptions -> IO MaybeOptions
-inputOpt arg opt = return opt { mOptInput = (takeBaseName arg, readFile arg) : mOptInput opt }
+inputOpt arg MaybeOptions{..} = (\file -> MaybeOptions{ mOptInputs = (takeBaseName arg, file) : mOptInputs, .. }) <$> readFile arg
 
 options :: [OptDescr (MaybeOptions -> IO MaybeOptions)]
 options =
@@ -127,40 +121,38 @@ options =
         (\_ -> do
           prg <- getProgName
           hPutStrLn stderr (usageInfo prg options)
-          exitWith ExitSuccess))
+          exitSuccess))
       "Show help"
   ]
 
 getActions :: ([MaybeOptions -> IO MaybeOptions], [String], [String]) -> IO [MaybeOptions -> IO MaybeOptions]
-getActions (actions, nonOptions, errors) = (sequence $ map errorWithoutStackTrace errors)
-                                        >> bool (errorWithoutStackTrace ("Unconsumed options: " ++ intercalate ", " nonOptions)) (return actions) (null nonOptions)
+getActions (actions, nonOptions, errors) = do
+  mapM_ errorWithoutStackTrace errors
+  bool (errorWithoutStackTrace ("Unconsumed options: " ++ intercalate ", " nonOptions)) (return actions) (null nonOptions)
 
 assertInput :: MaybeOptions -> MaybeOptions
-assertInput opts = bool opts (errorWithoutStackTrace "No input files given") . null . mOptInput $ opts
+assertInput MaybeOptions{..} = bool MaybeOptions{..} (errorWithoutStackTrace "No input files given") . null $ mOptInputs
 
 compileString :: (String, String) -> String
-compileString (ident, str) = "global "
-                          ++ ident
-                          ++ "\n"
-                          ++ ident
-                          ++ " DB "
-                          ++ (intercalate "," . map (show . fromEnum) $ str)
-                          ++ ",0"
-
-compile :: Format -> [(String, String)] -> String
-compile format xs = intercalate "\n" . map ($ map (mapFst (transformIdent format)) xs) $
-  [ const "section .data"
-  , intercalate "\n" . map (compileString $)
+compileString (ident, str) = concat
+  [ "global "
+  , ident
+  , "\n"
+  , ident
+  , " DB "
+  , intercalate "," . map (show . fromEnum) $ str
+  , ",0"
   ]
 
-wrap :: ([a], [a]) -> [a] -> [a]
-wrap (xs, zs) ys = xs ++ ys ++ zs
+compile :: Format -> [(String, String)] -> String
+compile format xs = intercalate "\n" $ "section .data" : map compileString idents
+  where idents = map (first (transformIdent format)) xs
 
 generateCDecl :: (String, String) -> String
-generateCDecl = wrap ("extern const char ","[];") . fst
+generateCDecl (ident, _) = "extern const char " ++ ident ++ "[];"
 
 generateHeader :: Format -> [(String, String)] -> String
-generateHeader _ xs = intercalate "\n" . map (generateCDecl $) $ xs
+generateHeader _ = intercalate "\n" . map generateCDecl
 
 outputFiles :: [(String, Format -> [(String, String)] -> String)]
 outputFiles =
@@ -168,31 +160,18 @@ outputFiles =
   , ("h", generateHeader)
   ]
 
-chain :: IO a -> [a -> IO ()] -> IO ()
-chain x = foldl (>>) (return ()) . map (x >>=)
-
-generateFiles :: [(String, Format -> [(String, String)] -> String)] -> Options -> IO ()
-generateFiles files opts =
-    chain (sequence . map (sequencePair . mapFst return) . optInput $ opts)
-  . map
-    (\(ext, gen) ->
-        writeFile (optOutput opts ++ "." ++ ext)
-      . gen (optOutputF opts)
-    )
-  $ files
-
-passthrough :: (a -> IO ()) -> a -> IO a
-passthrough f x = f x >> return x
+generateFiles :: Options -> [(String, Format -> [(String, String)] -> String)] -> IO ()
+generateFiles Options{..} =
+  mapM_ $ \(ext, gen) -> writeFile (optOutput ++ "." ++ ext) . gen optOutputF $ optInputs
 
 main :: IO ()
-main = getArgs                                          -- Get the arguments
-   >>= return . getOpt (ReturnInOrder inputOpt) options -- Parse options to get a list of actions and errors
-   >>= getActions                                       -- Throw the errors to get the actions
-   >>= foldl (>>=) (return initialOptions)              -- Here we thread defaultOptions through all supplied option actions
-   >>= return . assertInput                             -- Verify that input is non-empty
-   >>= return . fillDefaultOptions
-   >>= passthrough (generateFiles outputFiles)
-   >>= (\opts ->
-         callProcess "nasm" ["-f", show . optOutputF $ opts, optOutput opts ++ ".asm"]
-       )
+main = do
+  Options{..} <- fillDefaultOptions . assertInput <$> (
+        getOpt (ReturnInOrder inputOpt) options <$> getArgs -- Parse options to get a list of actions and errors
+    >>= getActions                                          -- Throw the errors to get the actions
+    >>= foldl (>>=) (return initialOptions)                 -- Here we thread defaultOptions through all supplied option actions
+    )
+
+  generateFiles Options{..} outputFiles
+  callProcess "nasm" ["-f", show optOutputF, optOutput ++ ".asm"]
 
